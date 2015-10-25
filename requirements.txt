@@ -1,0 +1,3 @@
+twisted
+pyasn1
+pycrypto
