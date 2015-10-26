@@ -44,7 +44,7 @@ class FunnelAuthorizedKeysFiles(conch_checkers.UNIXAuthorizedKeysFiles):
     An UNIXAuthorizedKeysFiles database that looks for key files in the
     home directory of the funnel user:
 
-        /home/$funnel_user/.ssh/$login_user.pub
+        /home/$funnel_user/$login_user.pub
     """
 
     def __init__(self, funnel_user, **kwargs):
@@ -59,7 +59,7 @@ class FunnelAuthorizedKeysFiles(conch_checkers.UNIXAuthorizedKeysFiles):
         except KeyError as E:
             return conch_checkers.FilePath('/tmp')
 
-        return conch_checkers.FilePath(passwd.pw_dir).child('.ssh')
+        return conch_checkers.FilePath(passwd.pw_dir)
 
     def getAuthorizedKeys(self, username):
         '''get the public key for username'''
@@ -155,3 +155,6 @@ def funnel(_, ep, funnel_user, keypair):
 def main(port, user, key, pubkey):
     ep = endpoints.TCP4ServerEndpoint(reactor, int(port))
     task.react(funnel, (ep, user, (key, pubkey)))
+
+if "__main__" == __name__:
+    main()
