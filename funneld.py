@@ -1,4 +1,7 @@
 import os
+import fcntl
+import struct
+import pty
 
 import click
 from twisted.conch import unix, avatar
@@ -12,6 +15,7 @@ from twisted.internet import reactor, defer, endpoints, task
 from zope.interface import implementer, implements
 from twisted.cred.credentials import ISSHPrivateKey
 from twisted.internet.error import CannotListenError
+from twisted.python import components
 
 publicKey = os.environ.get('PUBLIC_KEY', 'ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAGEArzJx8OYOnJmzf4tfBEvLi8DVPrJ3/c9k2I/Az64fxjHf9imyRJbixtQhlH9lfNjUIx+4LmrJH5QNRsFporcHDKOTwTTYLh5KmRpslkYHRivcJSkbh/C+BR3utDS555mV')
 
@@ -29,14 +33,32 @@ EhQ0wahUTCk1gKA4uPD6TMTChavbh4K63OvbKg==
 -----END RSA PRIVATE KEY-----""")
 
 
-class FunnelAvatar(unix.UnixConchUser, unix.SSHSessionForUnixConchUser):
+class FunnelAvatar(unix.UnixConchUser):
     """
     An UnixConchUser Avatar that always binds to the funnel user.
     """
-    def __init__(self, funnel_user):
+    def __init__(self, name, funnel_user):
+        self.name = name
         unix.UnixConchUser.__init__(self, funnel_user) # proxy to system user
-        unix.SSHSessionForUnixConchUser.__init__(self, self)
         self.channelLookup.update({'session':session.SSHSession})
+
+
+class FunnelSession(unix.SSHSessionForUnixConchUser):
+
+    def execCommand(self, proto, cmd):
+        try:
+            cmd = cmd.split()
+            size, cmd = cmd[:2], cmd[2:]
+        except ValueError:
+            self.avatar.conn.transport.transport.write("Invalid funneld parameters")
+            raise Exception("Invalid funneld parameters")
+        self.environ['NAME'] = self.avatar.name
+        self.environ['ROWS'] = str(size[0])
+        self.environ['COLS'] = str(size[1])
+        unix.SSHSessionForUnixConchUser.execCommand(self, proto, cmd)
+
+components.registerAdapter(
+   FunnelSession, FunnelAvatar, session.ISession)
 
 
 class FunnelAuthorizedKeysFiles(conch_checkers.UNIXAuthorizedKeysFiles):
@@ -72,7 +94,6 @@ class FunnelAuthorizedKeysFiles(conch_checkers.UNIXAuthorizedKeysFiles):
 
     def addAuthorizedKey(self, username, pubkey):
         '''set the public key for a username'''
-        print "adding key for", username
         filename = username + ".pub"
         filepath = self.root.child(filename)
         with open(filepath.path, "wb") as fobj:
@@ -93,10 +114,18 @@ class FunnelPubkeyAuth(conch_checkers.SSHPublicKeyChecker):
         conch_checkers.SSHPublicKeyChecker.__init__(self, keydb)
 
     def _addKey(self, pubKey, credentials):
-        self._keydb.addAuthorizedKey(credentials.username, pubKey)
+        try:
+            self._keydb.addAuthorizedKey(credentials.username, pubKey)
+        except Exception as e:
+            print "Error while adding key for {}".format(credentials.username)
+            print str(e)
 
     def _checkKey(self, pubKey, credentials):
-        keys = self._keydb.getAuthorizedKeys(credentials.username)
+        try:
+            keys = self._keydb.getAuthorizedKeys(credentials.username)
+        except Exception as e:
+            print "Error while checking key for {}".format(credentials.username)
+
         if len(keys):
             if any(key == pubKey for key in keys):
                 return pubKey
@@ -115,7 +144,8 @@ class FunnelRealm:
         self.funnel_user = funnel_user
 
     def requestAvatar(self, avatarId, mind, *interfaces):
-        return IConchUser, FunnelAvatar(self.funnel_user), lambda: None
+        print "Requesting login for", avatarId
+        return IConchUser, FunnelAvatar(avatarId, self.funnel_user), lambda: None
 
 
 def makeFunnelFactory(funnel_user, keypair):

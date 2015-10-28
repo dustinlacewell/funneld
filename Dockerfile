@@ -13,3 +13,5 @@ ADD ./funneld.py /funneld.py
 RUN useradd -m -s /usr/bin/funnel-sh -G docker funneld
 
 ENTRYPOINT ["python", "/funneld.py"]
+
+CMD ["--port", "22", "funneld"]
